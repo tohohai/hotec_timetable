@@ -1,0 +1,48 @@
+{% extends "timetable/base.html" %}
+
+{% block title %}Import {{ config.label }}{% endblock %}
+
+{% block content %}
+<h1 class="mt-3 mb-3">Import {{ config.label }}</h1>
+
+<p>
+  {{ config.description }}
+</p>
+
+<div class="alert alert-info">
+  <strong>Cấu trúc file Excel (.xlsx):</strong><br>
+  Hàng 1: tiêu đề (có hoặc không đều được, hệ thống chỉ đọc từ dòng 2).<br>
+  Mỗi dòng từ dòng 2 trở đi là 1 bản ghi.<br>
+  <u>Thứ tự các cột:</u><br>
+  {% for col in config.columns %}
+    - {{ forloop.counter }}: <code>{{ col }}</code><br>
+  {% endfor %}
+</div>
+
+<form method="post" enctype="multipart/form-data" class="mb-3">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <button type="submit" class="btn btn-success">Upload &amp; Import</button>
+  <a href="{% url 'timetable:data_import_menu' %}" class="btn btn-secondary">Quay lại</a>
+</form>
+
+{% if result %}
+  <h3>Kết quả import</h3>
+  <p>
+    Tạo mới: <strong>{{ result.created }}</strong> bản ghi<br>
+    Cập nhật: <strong>{{ result.updated }}</strong> bản ghi<br>
+    Số lỗi: <strong>{{ result.errors|length }}</strong>
+  </p>
+
+  {% if result.errors %}
+    <div class="alert alert-warning">
+      <strong>Chi tiết lỗi:</strong><br>
+      <ul>
+        {% for err in result.errors %}
+          <li>{{ err }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

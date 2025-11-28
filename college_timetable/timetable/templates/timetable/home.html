@@ -1,0 +1,62 @@
+{% extends "timetable/base.html" %}
+
+{% block title %}Trang chủ - Hệ thống TKB{% endblock %}
+
+{% block content %}
+<div class="mt-3">
+  <h1 class="mb-4">Hệ thống xếp Thời khoá biểu</h1>
+  <p class="text-muted">
+    Hỗ trợ xếp TKB tự động / bán tự động, quản lý khối lượng giảng viên,
+    và các dữ liệu liên quan (lớp, môn, phòng, NCKH...).
+  </p>
+
+  <div class="row mt-4">
+    <!-- Khối 1: Thời khoá biểu -->
+    <div class="col-md-4 mb-3">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Thời khoá biểu</h5>
+          <p class="card-text">
+            Xem và xếp lịch theo Học kỳ, Lớp sinh viên, Phòng, Giảng viên.
+          </p>
+          <a href="{% url 'timetable:semester_overview' %}" class="btn btn-primary btn-sm mb-1">Tổng quan Học kỳ</a>
+          <a href="{% url 'timetable:section_list' %}" class="btn btn-outline-primary btn-sm mb-1">Lớp học phần</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Khối 2: Báo cáo khối lượng -->
+    <div class="col-md-4 mb-3">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Khối lượng giảng viên</h5>
+          <p class="card-text">
+            Tổng hợp định mức, giờ dạy, NCKH, TTDN, bồi dưỡng...
+            theo từng năm học.
+          </p>
+          <a href="{% url 'timetable:instructor_workload' %}" class="btn btn-success btn-sm">
+            Xem báo cáo khối lượng
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Khối 3: Nhập dữ liệu -->
+    <div class="col-md-4 mb-3">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Nhập dữ liệu từ Excel</h5>
+          <p class="card-text">
+            Import các danh mục cần thiết (Khoa, Ngành, Lớp, Phòng, Môn, Giảng viên...)
+            từ file Excel mẫu.
+          </p>
+          <a href="{% url 'timetable:data_import_menu' %}" class="btn btn-warning btn-sm">
+            Mở trang Nhập dữ liệu
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

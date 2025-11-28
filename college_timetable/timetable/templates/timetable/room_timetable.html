@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Thời khóa biểu theo Phòng</title>
+  <style>
+    table { border-collapse: collapse; }
+    th, td { border: 1px solid #999; padding: 4px 8px; font-size: 13px; }
+    th { background: #eee; }
+    .cell { min-width: 160px; vertical-align: top; }
+    .subject { font-weight: bold; }
+    .room { font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Thời khóa biểu theo Phòng</h1>
+
+  <form method="get">
+    {{ form.as_p }}
+    <button type="submit">Xem TKB</button>
+  </form>
+
+  {% if room and semester and grid_rows %}
+    <h2>
+      Phòng: {{ room.code }} - {{ room.name }} |
+      Học kỳ: {{ semester }}
+    </h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Tiết / Thứ</th>
+          {% for day_val, day_label in days %}
+            <th>{{ day_label }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in grid_rows %}
+          <tr>
+            <th>Tiết {{ row.period }}</th>
+            {% for cell_slots in row.cells %}
+              <td class="cell">
+                {% if cell_slots %}
+                  {% for s in cell_slots %}
+                    <div class="subject">
+                      {{ s.course_section.subject.code }} - {{ s.course_section.subject.name }}
+                    </div>
+                    <div>
+                      LHP: {{ s.course_section.code }}
+                    </div>
+                    <div>
+                      Lớp SV:
+                      {% for cls in s.course_section.classes.all %}
+                        {{ cls.code }}{% if not forloop.last %}, {% endif %}
+                      {% endfor %}
+                    </div>
+                    <div>
+                      GV: {{ s.course_section.instructor|default:"(chưa phân công)" }}
+                    </div>
+                    <div>
+                      Tuần:
+                      {% for w in s.weeks.all %}
+                        {{ w.index }}{% if not forloop.last %}, {% endif %}
+                      {% endfor %}
+                    </div>
+                    {% if not forloop.last %}
+                      <hr>
+                    {% endif %}
+                  {% endfor %}
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</body>
+</html>

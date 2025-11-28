@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Thời khóa biểu - Chọn Học kỳ</title>
+</head>
+<body>
+  <h1>Thời khóa biểu - Chọn Học kỳ</h1>
+
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" name="filter">Xem Lớp học phần</button>
+    <button type="submit" name="run_auto">Chạy auto_schedule cho Học kỳ này</button>
+  </form>
+
+  {% if auto_result %}
+    <h2>Kết quả auto_schedule</h2>
+    <p>Đã xếp cho {{ auto_result.ok_count }} lớp học phần.</p>
+    <p>Không xếp được {{ auto_result.fail_count }} lớp:</p>
+    <ul>
+      {% for s, reason in auto_result.fail %}
+        <li>{{ s.code }}: {{ reason }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if sections %}
+    <h2>Danh sách Lớp học phần</h2>
+    <table border="1" cellpadding="4">
+      <tr>
+        <th>Mã LHP</th>
+        <th>Môn</th>
+        <th>GV</th>
+        <th>Ghi chú</th>
+        <th>Hành động</th>
+      </tr>
+      {% for s in sections %}
+        <tr>
+          <td>{{ s.code }}</td>
+          <td>{{ s.subject.name }} ({{ s.subject.code }})</td>
+          <td>{{ s.instructor }}</td>
+          <td>{{ s.note }}</td>
+          <td>
+            <a href="{% url 'timetable:section_schedule' s.pk %}">
+              Xếp / xem TKB (bán tự động)
+            </a>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+</body>
+</html>

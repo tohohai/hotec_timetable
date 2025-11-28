@@ -1,0 +1,31 @@
+{% extends "timetable/base.html" %}
+
+{% block title %}Nhập dữ liệu từ Excel{% endblock %}
+
+{% block content %}
+<h1 class="mt-3 mb-3">Nhập dữ liệu từ Excel</h1>
+
+<p class="text-muted">
+  Chọn loại dữ liệu cần import. Mỗi loại có file Excel riêng
+  với cấu trúc cột đơn giản (hàng đầu tiên là tiêu đề, bắt đầu đọc từ dòng 2).
+</p>
+
+<div class="row">
+  {% for key, cfg in import_config.items %}
+    <div class="col-md-4 mb-3">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">{{ cfg.label }}</h5>
+          <p class="card-text">
+            {{ cfg.description }}
+          </p>
+          <a href="{% url 'timetable:data_import_view' key %}"
+             class="btn btn-primary btn-sm">
+            Import {{ cfg.label }}
+          </a>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

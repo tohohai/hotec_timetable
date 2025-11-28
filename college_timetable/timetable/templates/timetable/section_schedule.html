@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Xếp TKB cho {{ section.code }}</title>
+</head>
+<body>
+  <h1>Xếp TKB (bán tự động) cho {{ section.code }} - {{ section.subject.name }}</h1>
+
+  <p>
+    Học kỳ: {{ section.semester }}<br>
+    Môn: {{ section.subject.name }} ({{ section.subject.code }})<br>
+    Số tiết: {{ section.planned_periods|default:section.subject.total_periods }}<br>
+    Lớp SV:
+    {% for cls in section.classes.all %}
+      {{ cls.code }}{% if not forloop.last %}, {% endif %}
+    {% endfor %}
+  </p>
+
+  <h2>Cấu hình xếp</h2>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Xếp bán tự động</button>
+  </form>
+
+  {% if error %}
+    <p style="color:red;">Lỗi: {{ error }}</p>
+  {% endif %}
+
+  {% if created_slots %}
+    <h2>Slot mới tạo</h2>
+    <ul>
+      {% for s in created_slots %}
+        <li>
+          Phòng:
+          {% if s.room %}
+            {{ s.room.code }}
+          {% else %}
+            (Không có phòng)
+          {% endif %}
+          |
+          Thứ {{ s.day_of_week }} |
+          Tiết {{ s.start_period }} - {{ s.end_period }} |
+          Tuần:
+          {% for w in s.weeks.all %}
+            {{ w.index }}{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <h2>Toàn bộ TKB hiện tại của LHP này</h2>
+  <ul>
+    {% for s in current_slots %}
+      <li>
+        Phòng:
+        {% if s.room %}
+          {{ s.room.code }}
+        {% else %}
+          (Không có phòng)
+        {% endif %}
+        |
+        Thứ {{ s.day_of_week }} |
+        Tiết {{ s.start_period }} - {{ s.end_period }} |
+        Tuần:
+        {% for w in s.weeks.all %}
+          {{ w.index }}{% if not forloop.last %}, {% endif %}
+        {% endfor %}
+      </li>
+    {% empty %}
+      <li>Chưa có buổi học nào.</li>
+    {% endfor %}
+  </ul>
+
+  <p><a href="{% url 'timetable:semester_overview' %}">← Quay lại danh sách Lớp học phần</a></p>
+</body>
+</html>

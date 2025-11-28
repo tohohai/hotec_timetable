@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Báo cáo khối lượng giảng viên</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+    }
+    h1, h2 {
+      margin-bottom: 0.5rem;
+    }
+    form {
+      margin-bottom: 1rem;
+      padding: 0.5rem;
+      border: 1px solid #ccc;
+      display: inline-block;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 0.5rem;
+    }
+    th, td {
+      border: 1px solid #999;
+      padding: 4px 6px;
+      vertical-align: top;
+      font-size: 13px;
+    }
+    th {
+      background: #eee;
+    }
+    .overload {
+      color: red;
+      font-weight: bold;
+    }
+    .underload {
+      color: green;
+    }
+    .nowrap {
+      white-space: nowrap;
+    }
+    small {
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>Báo cáo khối lượng giảng viên theo Năm học</h1>
+
+  <form method="get">
+    {{ form.as_p }}
+    <button type="submit">Xem khối lượng</button>
+  </form>
+  
+  {% if academic_year %}
+    <h2>Năm học: {{ academic_year.code }}</h2>
+  
+    <p>
+      <a href="?academic_year={{ academic_year.id }}&export=1">
+        ⬇ Xuất Excel (CSV)
+      </a>
+    </p>
+  
+    {% if workload_data %}
+      <table>
+        <thead>
+          <tr>
+            <!-- Thông tin & định mức -->
+            <th rowspan="2">Giảng viên</th>
+            <th colspan="2">Định mức gốc</th>
+
+            <!-- Các loại miễn giảm (mỗi loại 1 cột) -->
+            {% if reduction_types %}
+              <th colspan="{{ reduction_types|length|add:'2' }}">
+                Giảm định mức GIẢNG DẠY theo nhiệm vụ
+              </th>
+            {% endif %}
+
+            <!-- Thực hiện GIẢNG DẠY -->
+            <th rowspan="2">Giờ dạy<br>thực tế</th>
+            <th rowspan="2">Dư / thiếu<br>GIẢNG DẠY</th>
+
+            <!-- Thực hiện HÀNH CHÍNH -->
+            <th colspan="5">Giờ HÀNH CHÍNH (đã thực hiện)</th>
+          </tr>
+          <tr>
+            <!-- Dòng 2 header -->
+            <th>GD gốc</th>
+            <th>HC gốc</th>
+
+            {% if reduction_types %}
+              {% for r in reduction_types %}
+                <th>{{ r.name }}</th>
+              {% endfor %}
+              <th>Tổng giảm GD</th>
+              <th>ĐM GD còn lại</th>
+            {% endif %}
+
+            <th>NCKH</th>
+            <th>TTDN</th>
+            <th>Bồi dưỡng</th>
+            <th>Dạy quy đổi</th>
+            <th>Tổng HC</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {% for row in workload_data %}
+            {% with ins=row.instructor %}
+            <tr>
+              <!-- Giảng viên -->
+              <td class="nowrap">
+                <a href="{% url 'timetable:instructor_workload_detail' ins.id academic_year.id %}">
+                  {{ ins.name }}
+                </a><br>
+                <small>Mã: {{ ins.code }}</small>
+              </td>             
+
+              <!-- ĐM gốc -->
+              <td>{{ row.base_teaching_quota|floatformat:1 }}</td>
+              <td>{{ row.base_admin_quota|floatformat:1 }}</td>
+
+              <!-- Mỗi loại miễn giảm là 1 cột (đã tính sẵn ở view) -->
+              {% if row.teaching_reduction_by_type %}
+                {% for item in row.teaching_reduction_by_type %}
+                  <td>{{ item.hours|floatformat:1 }}</td>
+                {% endfor %}
+
+                <!-- Tổng giảm GD & ĐM GD còn lại -->
+                <td>{{ row.teaching_reduced_hours|floatformat:1 }}</td>
+                <td><strong>{{ row.teaching_quota_adj|floatformat:1 }}</strong></td>
+              {% endif %}
+
+              <!-- Giờ dạy thực tế -->
+              <td>{{ row.teaching_hours|floatformat:1 }}</td>
+
+              <!-- Dư / thiếu GD -->
+              <td>
+                {% if row.teaching_overload > 0 %}
+                  <span class="overload">+{{ row.teaching_overload|floatformat:1 }}</span>
+                {% else %}
+                  <span class="underload">{{ row.teaching_overload|floatformat:1 }}</span>
+                {% endif %}
+              </td>
+
+              <!-- NCKH, TTDN, Bồi dưỡng, Dạy quy đổi, Tổng HC -->
+              <td>{{ row.rp_hours|floatformat:1 }}</td>
+              <td>{{ row.ei_hours|floatformat:1 }}</td>
+              <td>{{ row.pd_hours|floatformat:1 }}</td>
+              <td>{{ row.teaching_to_admin_hours|floatformat:1 }}</td>
+              <td>{{ row.admin_hours_total|floatformat:1 }}</td>
+            </tr>
+            {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>Chưa có dữ liệu khối lượng cho năm học này.</p>
+    {% endif %}
+  {% endif %}
+</body>
+</html>
