@@ -390,6 +390,7 @@ class Room(models.Model):
     def __str__(self):
         return self.code
 
+
 class RoomCapability(models.Model):
     room = models.ForeignKey(Room, on_delete=models.CASCADE)
     group = models.ForeignKey(SpecializationGroup, on_delete=models.CASCADE)

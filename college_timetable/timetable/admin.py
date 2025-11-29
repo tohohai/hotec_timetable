@@ -124,12 +124,55 @@ class RoomCapabilityInline(admin.TabularInline):
     extra = 0
 
 
+# @admin.register(Room)
+# class RoomAdmin(admin.ModelAdmin):
+#     list_display = ("code", "name", "room_type", "capacity")
+#     list_filter = ("room_type",)
+#     search_fields = ("code", "name")
+#     inlines = [RoomCapabilityInline]
+
 @admin.register(Room)
 class RoomAdmin(admin.ModelAdmin):
-    list_display = ("code", "name", "room_type", "capacity")
+    # 1. Thêm tên các hàm tự viết vào list_display
+    list_display = ("code", "name", "room_type", "capacity", "show_capabilities", "show_allowed_majors")
+    
     list_filter = ("room_type",)
     search_fields = ("code", "name")
-    inlines = [RoomCapabilityInline]
+    
+    # Giữ nguyên inline của bạn để chỉnh sửa dữ liệu
+    inlines = [RoomCapabilityInline] 
+
+    # 2. Hàm hiển thị Nhóm chuyên môn (capabilities)
+    def show_capabilities(self, obj):
+        # Lấy tất cả đối tượng liên quan và nối tên chúng lại bằng dấu phẩy
+        # Giả sử model SpecializationGroup có hàm __str__ trả về tên
+        return ", ".join([str(group) for group in obj.capabilities.all()])
+    
+    # Đặt tên cột hiển thị trên giao diện
+    show_capabilities.short_description = "Nhóm chuyên môn"
+
+    # 3. Hàm hiển thị Ngành ưu tiên (allowed_majors)
+    def show_allowed_majors(self, obj):
+        # Kiểm tra nếu không có ngành nào thì hiển thị báo hiệu (tùy chọn)
+        majors = obj.allowed_majors.all()
+        if majors:
+            return ", ".join([str(major) for major in majors])
+        return "Tất cả (Trống)" # Hoặc để trống ""
+        
+    show_allowed_majors.short_description = "Ưu tiên/Cho phép Ngành"
+
+    # (Nâng cao) Tối ưu hiệu năng để tránh load chậm
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        # Dùng prefetch_related cho các trường ManyToMany để giảm số lượng câu truy vấn SQL
+        return queryset.prefetch_related('capabilities', 'allowed_majors')
+
+@admin.register(RoomCapability)
+class RoomCapabilityAdmin(admin.ModelAdmin):
+    list_display = ("room", "group", "priority")
+    list_filter = ("room",)
+
+    
 
 
 @admin.register(Subject)

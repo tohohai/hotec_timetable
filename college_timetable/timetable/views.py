@@ -39,7 +39,26 @@ from .services import (
     auto_schedule_whole_semester_fixed,
     semi_auto_schedule_section,
 )
-# Các thứ trong tuần & tiết (dùng cho bảng TKB)
+
+from .import_services import import_all_from_excel
+
+def data_import_all_view(request):
+    result = None
+
+    if request.method == "POST" and request.FILES.get("file"):
+        result = import_all_from_excel(request.FILES["file"])
+
+    return render(
+        request,
+        "timetable/data_import_all.html",
+        {
+            "result": result,
+            "form": ExcelUploadForm(), #Sửa chổ này
+        },
+    )
+
+
+
 DAYS = [
     (1, "Thứ 2"),
     (2, "Thứ 3"),
@@ -467,6 +486,12 @@ IMPORT_CONFIG = {
         "function": import_services.import_specialization_groups_from_excel,
         "columns": ["code", "name"],
         "description": "Nhóm ngành, nhóm môn thực hành...",
+    },
+    "room_capabilities": {
+        "label": "Khả năng chuyên môn chi tiết (RoomCapability)",
+        "function": import_services.import_room_capabilities_from_excel,
+        "columns": ["room_code", "group_code", "priority"],
+        "description": "Cập nhật mức ưu tiên (1-3) cho cặp Phòng - Nhóm CM.",
     },
     "rooms": {
         "label": "Phòng học (Room)",
