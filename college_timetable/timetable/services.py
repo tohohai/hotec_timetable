@@ -2,6 +2,9 @@ from math import ceil
 from django.db.models import Q
 from datetime import timedelta
 from django.db import models
+from typing import Optional
+from collections import defaultdict 
+
 from .models import (    
     AcademicYear,    
     CourseSection,  
@@ -18,11 +21,80 @@ from .models import (
     StudentClass,
     Semester,
     SemesterWeek,
+    SemesterBreak, 
     Subject,
     TeachingSlot,   
 )
 
 ACADEMIC_YEAR_MONTHS = 10  # hoặc 12 nếu bạn muốn tính theo năm dương lịch
+
+#Định nghĩa sỉ số của lớp lý thuyết, tích hợp
+# def get_max_size_for_subject(subject: Subject) -> int:
+#     """
+#     Xác định sĩ số tối đa / LHP theo mã môn:
+
+#     - 'MĐ...' hoặc 'MD...'  -> 20 SV / lớp (mô-đun, thực hành)
+#     - 'MH...'               -> 32 SV / lớp (môn lý thuyết)
+#     - Khác                  -> dùng subject.max_class_size (hoặc 35 nếu trống)
+#     """
+#     code = (subject.code or "").upper().strip()
+
+#     if code.startswith("MĐ") or code.startswith("MD"):
+#         return 20
+
+#     if code.startswith("MH"):
+#         return 32
+
+#     return subject.max_class_size or 35
+
+# def get_max_size_for_subject(subject: Subject) -> int:
+#     """
+#     Sĩ số tối đa / lớp học phần:
+
+#     - Môn TH (subject_type='TH')        -> 20 SV / lớp
+#     - Môn mã bắt đầu 'MĐ' hoặc 'MD'    -> 20 SV / lớp
+#     - Môn mã bắt đầu 'MH'              -> 32 SV / lớp
+#     - Còn lại                          -> subject.max_class_size (hoặc 35 nếu trống)
+#     """
+#     code = (subject.code or "").upper().strip()
+#     stype = (subject.subject_type or "").upper().strip()
+
+#     # Thực hành trên máy, mô-đun...: 20
+#     if stype == "TH" or code.startswith("MĐ") or code.startswith("MD"):
+#         return 20
+
+#     # Môn lý thuyết mã MH: 32
+#     if code.startswith("MH"):
+#         return 32
+
+#     # Mặc định
+#     return subject.max_class_size or 35
+
+def get_max_size_for_subject(subject: Subject) -> int:
+    """
+    Sĩ số tối đa / lớp học phần:
+
+    - Môn mã bắt đầu 'MĐ' hoặc 'MD'      -> 20 SV / lớp
+    - Môn mã bắt đầu 'MH'               -> 32 SV / lớp
+    - Nếu không rơi vào 2 loại trên:
+        + Nếu subject_type = 'TH'       -> 20 SV / lớp
+        + Ngược lại dùng subject.max_class_size (hoặc 35 nếu trống)
+    """
+    code = (subject.code or "").upper().strip()
+    stype = (subject.subject_type or "").upper().strip()
+
+    # ƯU TIÊN MÃ MÔN TRƯỚC
+    if code.startswith("MĐ") or code.startswith("MD"):
+        return 20
+
+    if code.startswith("MH"):
+        return 32
+
+    # Sau đó mới xét theo loại môn
+    if stype == "TH":
+        return 20
+
+    return subject.max_class_size or 35
 
 
 def suggest_share_weights(num_members: int):
@@ -59,102 +131,452 @@ def auto_distribute_research_members(project: ResearchProject):
         m.share_ratio = w / total_weight  # ví dụ 6/10 = 0.6
         m.save()
 
+# def get_semester_index_for_class(student_class: StudentClass, semester: Semester) -> int:
+#     """
+#     Xác định 'học kỳ thứ mấy' trong CTĐT của một lớp tại một Học kỳ cụ thể.
+
+#     Ví dụ bạn đã nói:
+#       - HK1 năm học 2025 thì:
+#           + Khoá 25 (năm nhập học 2025)  -> HK1
+#           + Khoá 24 (năm nhập học 2024)  -> HK3
+#           + Khoá 23 (năm nhập học 2023)  -> HK5
+
+#     Ở đây mình viết 1 version MINH HOẠ,
+#     bạn chỉ cần chỉnh lại phần parse năm/khoá cho đúng format thật sự.
+#     """
+
+#     # Giả sử AcademicYear.code là số năm, ví dụ '2025', '2024'...
+#     try:
+#         cur_year = int(semester.academic_year.code)
+#         intake_year = int(student_class.academic_year.code)
+#     except ValueError:
+#         # Nếu code không phải số (vd: 'NH25-26'), bạn sửa logic này lại.
+#         raise ValueError(
+#             f"Chưa cài đặt logic tính semester_index cho dạng mã năm học: "
+#             f"{semester.academic_year.code} / {student_class.academic_year.code}"
+#         )
+
+#     # Chênh lệch năm tuyển so với năm hiện tại
+#     # VD: intake 2025, current 2025 -> diff = 0 -> HK1
+#     #     intake 2024, current 2025 -> diff = 1 -> HK3
+#     #     intake 2023, current 2025 -> diff = 2 -> HK5
+#     year_diff = cur_year - intake_year
+
+#     # Mặc định mỗi năm 2 học kỳ.
+#     # Giả sử HK1 là học kỳ lẻ: 1,3,5; HK2 là học kỳ chẵn: 2,4,6.
+#     if semester.code.upper() in ("HK1", "1"):
+#         # HK lẻ: 1 + 2*diff
+#         return 1 + 2 * year_diff
+#     elif semester.code.upper() in ("HK2", "2"):
+#         # HK chẵn: 2 + 2*diff
+#         return 2 + 2 * year_diff
+#     else:
+#         # Nếu dùng code khác (VD: 'HK3', 'Hè'...), bạn xử lý thêm.
+#         raise ValueError(f"Không hiểu mã Học kỳ: {semester.code}")
+
+def _extract_year_int(code: str) -> Optional[int]:
+    """
+    Lấy ra phần số trong mã năm học, ví dụ:
+    - '2025'      -> 2025
+    - '2025-2026' -> 2025
+    - 'NH25-26'   -> 25  (tuỳ bạn muốn xử lý sao)
+    """
+    if not code:
+        return None
+    digits = "".join(ch for ch in str(code) if ch.isdigit())
+    if not digits:
+        return None
+    return int(digits)
+
 def get_semester_index_for_class(student_class: StudentClass, semester: Semester) -> int:
     """
     Xác định 'học kỳ thứ mấy' trong CTĐT của một lớp tại một Học kỳ cụ thể.
 
-    Ví dụ bạn đã nói:
-      - HK1 năm học 2025 thì:
-          + Khoá 25 (năm nhập học 2025)  -> HK1
-          + Khoá 24 (năm nhập học 2024)  -> HK3
-          + Khoá 23 (năm nhập học 2023)  -> HK5
-
-    Ở đây mình viết 1 version MINH HOẠ,
-    bạn chỉ cần chỉnh lại phần parse năm/khoá cho đúng format thật sự.
+    Quy ước:
+    - Mỗi năm có 2 học kỳ: HK1, HK2.
+    - HK1 của khoá nhập học -> học kỳ 1
+    - HK2 của năm nhập học  -> học kỳ 2
+    - HK1 của năm kế tiếp   -> học kỳ 3
+    - HK2 của năm kế tiếp   -> học kỳ 4
+    ...
     """
+    cur_year = _extract_year_int(semester.academic_year.code)
+    intake_year = _extract_year_int(student_class.academic_year.code)
 
-    # Giả sử AcademicYear.code là số năm, ví dụ '2025', '2024'...
-    try:
-        cur_year = int(semester.academic_year.code)
-        intake_year = int(student_class.academic_year.code)
-    except ValueError:
-        # Nếu code không phải số (vd: 'NH25-26'), bạn sửa logic này lại.
-        raise ValueError(
-            f"Chưa cài đặt logic tính semester_index cho dạng mã năm học: "
-            f"{semester.academic_year.code} / {student_class.academic_year.code}"
-        )
+    if cur_year is None or intake_year is None:
+        # Không parse được -> mặc định HK1
+        return 1
 
-    # Chênh lệch năm tuyển so với năm hiện tại
-    # VD: intake 2025, current 2025 -> diff = 0 -> HK1
-    #     intake 2024, current 2025 -> diff = 1 -> HK3
-    #     intake 2023, current 2025 -> diff = 2 -> HK5
-    year_diff = cur_year - intake_year
+    year_diff = cur_year - intake_year  # 0, 1, 2, ...
 
-    # Mặc định mỗi năm 2 học kỳ.
-    # Giả sử HK1 là học kỳ lẻ: 1,3,5; HK2 là học kỳ chẵn: 2,4,6.
-    if semester.code.upper() in ("HK1", "1"):
-        # HK lẻ: 1 + 2*diff
-        return 1 + 2 * year_diff
-    elif semester.code.upper() in ("HK2", "2"):
-        # HK chẵn: 2 + 2*diff
-        return 2 + 2 * year_diff
+    code = (semester.code or "").upper()
+    # Mặc định HK1/HK2
+    if code in ("HK1", "1"):
+        sem_index = 1 + 2 * year_diff     # 0 -> 1, 1 -> 3, 2 -> 5...
+    elif code in ("HK2", "2"):
+        sem_index = 2 + 2 * year_diff     # 0 -> 2, 1 -> 4, 2 -> 6...
     else:
-        # Nếu dùng code khác (VD: 'HK3', 'Hè'...), bạn xử lý thêm.
-        raise ValueError(f"Không hiểu mã Học kỳ: {semester.code}")
+        # nếu có HK Hè, HK3... bạn bổ sung thêm
+        sem_index = 1
 
+    # Giới hạn trong số học kỳ của bậc đào tạo
+    duration = getattr(student_class.major.level, "duration_semesters", 5) or 5
+    if sem_index < 1:
+        sem_index = 1
+    if sem_index > duration:
+        sem_index = duration
 
-def generate_course_sections_for_semester(semester: Semester, department_code: str = "CNTT"):
+    return sem_index
+
+# def generate_course_sections_for_semester(semester: Semester, department_code: str = "CNTT"):
+#     """
+#     Sinh Lớp học phần (CourseSection) cho một Học kỳ:
+
+#     - Lọc các Lớp sinh viên thuộc khoa cần xếp (mặc định: CNTT).
+#     - Với mỗi lớp:
+#         + Tìm Curriculum (Ngành + Khoá/Năm nhập học).
+#         + Tính 'semester_index' theo quy tắc trên.
+#         + Lấy các CurriculumSubject đúng semester_index.
+#         + Bỏ qua môn is_external_managed (môn do khoa khác xếp).
+#         + Dựa vào sĩ số lớp & Subject.max_class_size để chia số lớp HP.
+#         + Tạo CourseSection tương ứng, gán lớp & planned_periods.
+#     """
+#     classes = StudentClass.objects.filter(department__code=department_code)
+
+#     created_sections = []
+
+#     for cls in classes:
+#         # 1. Xác định CTĐT của lớp
+#         try:
+#             curriculum = Curriculum.objects.get(major=cls.major, intake_year=cls.academic_year)
+#         except Curriculum.DoesNotExist:
+#             # Không có CTĐT -> bỏ qua lớp này
+#             continue
+
+#         # 2. Xác định học kỳ trong CTĐT mà lớp đang học
+#         semester_index = get_semester_index_for_class(cls, semester)
+
+#         # 3. Lấy các môn sẽ học trong học kỳ này
+#         cur_subjects = CurriculumSubject.objects.filter(
+#             curriculum=curriculum,
+#             semester_index=semester_index
+#         ).select_related("subject")
+
+#         for cs in cur_subjects:
+#             subject: Subject = cs.subject
+
+#             # Nếu môn do đơn vị khác xếp thì bỏ qua
+#             if subject.is_external_managed:
+#                 continue
+
+#             # Tổng tiết cho môn này
+#             total_periods = cs.total_periods or subject.total_periods
+
+#             # Sĩ số lớp và sĩ số tối đa/lớp HP
+#             max_size = subject.max_class_size or 35
+#             num_sections = ceil(cls.size / max_size)
+
+#             for i in range(1, num_sections + 1):
+#                 section_code = f"{cls.code}_{subject.code}_{i:02d}"
+
+#                 course_section, created = CourseSection.objects.get_or_create(
+#                     semester=semester,
+#                     code=section_code,
+#                     defaults={
+#                         "subject": subject,
+#                         "planned_periods": total_periods,
+#                     },
+#                 )
+#                 # Gắn class vào (nếu sau này bạn cho gộp lớp, có thể thay đổi logic ở đây)
+#                 course_section.classes.add(cls)
+
+#                 created_sections.append(course_section)
+
+#     return created_sections
+
+# def generate_course_sections_for_semester(
+#     semester: Semester,
+#     department_code: str | None = "CNTT",
+# ):
+#     """
+#     Sinh Lớp học phần (CourseSection) cho một Học kỳ:
+
+#     - Nếu truyền department_code (VD: 'CNTT'):
+#         → chỉ lấy các lớp sinh viên thuộc Khoa đó.
+#     - Nếu department_code = None:
+#         → lấy TẤT CẢ lớp sinh viên.
+
+#     Với mỗi lớp:
+#       + Tìm Curriculum (Ngành + Khoá/Năm nhập học).
+#       + Tính semester_index (HK thứ mấy trong CTĐT) bằng get_semester_index_for_class.
+#       + Lấy các CurriculumSubject đúng semester_index.
+#       + Bỏ qua môn is_external_managed.
+#       + Dựa vào sĩ số lớp & Subject.max_class_size để chia số lớp HP.
+#       + Tạo CourseSection tương ứng, gán lớp & planned_periods.
+#     """
+#     # --- Lọc lớp theo khoa (nếu có) ---
+#     classes_qs = StudentClass.objects.all()
+#     if department_code:
+#         classes_qs = classes_qs.filter(department__code=department_code)
+
+#     created_sections: list[CourseSection] = []
+
+#     for cls in classes_qs:
+#         # 1. Xác định CTĐT của lớp
+#         try:
+#             curriculum = Curriculum.objects.get(
+#                 major=cls.major,
+#                 intake_year=cls.academic_year,
+#             )
+#         except Curriculum.DoesNotExist:
+#             # Không có CTĐT -> bỏ qua lớp này
+#             continue
+
+#         # 2. Xác định học kỳ trong CTĐT mà lớp đang học
+#         semester_index = get_semester_index_for_class(cls, semester)
+
+#         # 3. Lấy các môn sẽ học trong học kỳ này
+#         cur_subjects = CurriculumSubject.objects.filter(
+#             curriculum=curriculum,
+#             semester_index=semester_index,
+#         ).select_related("subject")
+
+#         for cs in cur_subjects:
+#             subject: Subject = cs.subject
+
+#             # Nếu môn do đơn vị khác xếp thì bỏ qua
+#             if subject.is_external_managed:
+#                 continue
+
+#             # Tổng tiết cho môn này
+#             total_periods = cs.total_periods or subject.total_periods
+
+#             # Sĩ số lớp và sĩ số tối đa/lớp HP
+#             max_size = subject.max_class_size or 35
+#             num_sections = ceil(cls.size / max_size) if cls.size > 0 else 1
+
+#             for i in range(1, num_sections + 1):
+#                 section_code = f"{cls.code}_{subject.code}_{i:02d}"
+
+#                 course_section, created = CourseSection.objects.get_or_create(
+#                     semester=semester,
+#                     code=section_code,
+#                     defaults={
+#                         "subject": subject,
+#                         "planned_periods": total_periods,
+#                     },
+#                 )
+#                 # Gắn class vào
+#                 course_section.classes.add(cls)
+
+#                 created_sections.append(course_section)
+
+#     return created_sections
+
+# def generate_course_sections_for_semester(
+#     semester: Semester,
+#     department_code: str | None = "CNTT",
+# ):
+#     """
+#     Sinh Lớp học phần (CourseSection) cho một Học kỳ.
+
+#     - Nếu truyền department_code (VD: 'CNTT'):
+#         → chỉ lấy các lớp sinh viên thuộc Khoa đó.
+#     - Nếu department_code = None:
+#         → lấy TẤT CẢ lớp sinh viên.
+
+#     QUAN TRỌNG: gộp các lớp cùng (major, academic_year) lại, tính tổng sĩ số
+#     rồi chia ra nhiều LHP cho từng môn, sao cho:
+
+#       - MĐ* / MD*  : tối đa 20 SV / lớp
+#       - MH*       : tối đa 32 SV / lớp
+#       - khác      : dùng subject.max_class_size (hoặc 35)
+
+#     Mỗi LHP có thể chứa NHIỀU lớp sinh viên (CourseSection.classes M2M).
+#     """
+
+#     # --- Lọc lớp theo khoa (nếu có) ---
+#     classes_qs = StudentClass.objects.all()
+#     if department_code:
+#         classes_qs = classes_qs.filter(department__code=department_code)
+
+#     classes = list(classes_qs.select_related("major", "academic_year"))
+
+#     # --- Gom lớp theo (major, academic_year) ---
+#     groups: dict[tuple[int, int], list[StudentClass]] = defaultdict(list)
+#     for cls in classes:
+#         key = (cls.major_id, cls.academic_year_id)
+#         groups[key].append(cls)
+
+#     created_sections: list[CourseSection] = []
+
+#     # Duyệt từng nhóm Ngành + Khoá
+#     for (major_id, ay_id), group_classes in groups.items():
+#         # Lấy 1 lớp đại diện để tính semester_index
+#         sample_class = group_classes[0]
+
+#         # 1. Curriculum cho (major, intake_year)
+#         try:
+#             curriculum = Curriculum.objects.get(
+#                 major=sample_class.major,
+#                 intake_year=sample_class.academic_year,
+#             )
+#         except Curriculum.DoesNotExist:
+#             # Nhóm này chưa có CTĐT -> bỏ qua
+#             continue
+
+#         # 2. Học kỳ trong CTĐT mà khoá này đang học
+#         semester_index = get_semester_index_for_class(sample_class, semester)
+
+#         # 3. Các môn trong CTĐT của học kỳ này
+#         cur_subjects = CurriculumSubject.objects.filter(
+#             curriculum=curriculum,
+#             semester_index=semester_index,
+#         ).select_related("subject")
+
+#         for cs in cur_subjects:
+#             subject: Subject = cs.subject
+
+#             # Bỏ môn do đơn vị khác xếp
+#             if subject.is_external_managed:
+#                 continue
+
+#             # Tổng tiết
+#             total_periods = cs.total_periods or subject.total_periods
+
+#             # Sĩ số tối đa / LHP theo quy tắc MH / MĐ
+#             max_size = get_max_size_for_subject(subject)
+
+#             # Tổng sĩ số toàn bộ các lớp trong nhóm
+#             total_students = sum(cls.size or 0 for cls in group_classes)
+
+#             if total_students <= 0:
+#                 # Không có SV -> vẫn tạo 1 LHP rỗng cho đủ CTĐT
+#                 total_students = 0
+
+#             # --- Chia các lớp vào nhiều "bucket" (LHP) sao cho
+#             #     tổng sĩ số mỗi bucket <= max_size ---
+#             # Dùng greedy: sắp xếp lớp to -> nhỏ, nhét vào bucket còn chỗ.
+#             sorted_classes = sorted(group_classes, key=lambda c: c.size or 0, reverse=True)
+
+#             buckets: list[dict] = []  # mỗi bucket: {"classes": [..], "size": int}
+
+#             for cls in sorted_classes:
+#                 placed = False
+#                 cls_size = cls.size or 0
+
+#                 for b in buckets:
+#                     if b["size"] + cls_size <= max_size:
+#                         b["classes"].append(cls)
+#                         b["size"] += cls_size
+#                         placed = True
+#                         break
+
+#                 if not placed:
+#                     buckets.append({"classes": [cls], "size": cls_size})
+
+#             # 4. Tạo CourseSection tương ứng cho từng bucket
+#             #    Đặt mã dựa trên Khoá + Ngành + Môn + số thứ tự
+#             major_code = sample_class.major.code
+#             intake_code = sample_class.academic_year.code
+
+#             for idx, bucket in enumerate(buckets, start=1):
+#                 section_code = f"{intake_code}_{major_code}_{subject.code}_{idx:02d}"
+
+#                 course_section, is_created = CourseSection.objects.get_or_create(
+#                     semester=semester,
+#                     code=section_code,
+#                     defaults={
+#                         "subject": subject,
+#                         "planned_periods": total_periods,
+#                     },
+#                 )
+
+#                 # Gán tất cả lớp thuộc bucket vào LHP
+#                 course_section.classes.add(*bucket["classes"])
+
+#                 created_sections.append(course_section)
+
+#     return created_sections
+
+def generate_course_sections_for_semester(
+    semester: Semester,
+    department_code: str | None = "CNTT",
+):
     """
-    Sinh Lớp học phần (CourseSection) cho một Học kỳ:
+    Sinh Lớp học phần (CourseSection) cho một Học kỳ.
 
-    - Lọc các Lớp sinh viên thuộc khoa cần xếp (mặc định: CNTT).
-    - Với mỗi lớp:
-        + Tìm Curriculum (Ngành + Khoá/Năm nhập học).
-        + Tính 'semester_index' theo quy tắc trên.
-        + Lấy các CurriculumSubject đúng semester_index.
-        + Bỏ qua môn is_external_managed (môn do khoa khác xếp).
-        + Dựa vào sĩ số lớp & Subject.max_class_size để chia số lớp HP.
-        + Tạo CourseSection tương ứng, gán lớp & planned_periods.
+    Quy tắc:
+    - Gom các lớp theo (major, academic_year)  => cùng ngành + cùng khoá.
+    - Chỉ lấy lớp thuộc department_code (nếu truyền).
+    - Với mỗi nhóm ngành–khoá:
+        + Lấy Curriculum tương ứng.
+        + Tính semester_index bằng get_semester_index_for_class
+          (dùng bất kỳ lớp nào trong nhóm vì cùng khoá).
+        + Lấy CurriculumSubject của học kỳ đó.
+        + Với mỗi môn:
+            * tổng_sĩ_số = sum(size của tất cả lớp trong nhóm)
+            * max_size = get_max_size_for_subject(subject)
+            * số_LHP = ceil(tổng_sĩ_số / max_size)
+        + Tạo đúng số_LHP CourseSection và gán TẤT CẢ các lớp trong nhóm
+          vào từng section (course_section.classes.add(*group_classes)).
     """
-    classes = StudentClass.objects.filter(department__code=department_code)
 
-    created_sections = []
+    # --- Lọc lớp theo Khoa (nếu có) ---
+    classes_qs = StudentClass.objects.all().select_related("major", "academic_year", "department")
+    if department_code:
+        classes_qs = classes_qs.filter(department__code=department_code)
 
-    for cls in classes:
-        # 1. Xác định CTĐT của lớp
+    # --- Gom lớp theo (Ngành, Khoá) ---
+    groups: dict[tuple[int, int], list[StudentClass]] = defaultdict(list)
+    for cls in classes_qs:
+        key = (cls.major_id, cls.academic_year_id)
+        groups[key].append(cls)
+
+    created_sections: list[CourseSection] = []
+
+    for (major_id, intake_year_id), group_classes in groups.items():
+        # Lấy Curriculum cho ngành–khoá này
         try:
-            curriculum = Curriculum.objects.get(major=cls.major, intake_year=cls.academic_year)
+            curriculum = Curriculum.objects.get(
+                major_id=major_id,
+                intake_year_id=intake_year_id,
+            )
         except Curriculum.DoesNotExist:
-            # Không có CTĐT -> bỏ qua lớp này
+            # Không có CTĐT -> bỏ cả nhóm
             continue
 
-        # 2. Xác định học kỳ trong CTĐT mà lớp đang học
-        semester_index = get_semester_index_for_class(cls, semester)
+        # Dùng 1 lớp trong nhóm để tính semester_index (cùng khoá nên giống nhau)
+        sample_class = group_classes[0]
+        semester_index = get_semester_index_for_class(sample_class, semester)
 
-        # 3. Lấy các môn sẽ học trong học kỳ này
+        # Các môn học kỳ này trong CTĐT
         cur_subjects = CurriculumSubject.objects.filter(
             curriculum=curriculum,
-            semester_index=semester_index
+            semester_index=semester_index,
         ).select_related("subject")
+
+        # Tổng sĩ số của cả nhóm ngành–khoá
+        total_group_size = sum(c.size or 0 for c in group_classes)
 
         for cs in cur_subjects:
             subject: Subject = cs.subject
 
-            # Nếu môn do đơn vị khác xếp thì bỏ qua
+            # Bỏ môn do đơn vị khác xếp
             if subject.is_external_managed:
                 continue
 
-            # Tổng tiết cho môn này
             total_periods = cs.total_periods or subject.total_periods
 
-            # Sĩ số lớp và sĩ số tối đa/lớp HP
-            max_size = subject.max_class_size or 35
-            num_sections = ceil(cls.size / max_size)
+            max_size = get_max_size_for_subject(subject)
+            num_sections = ceil(total_group_size / max_size) if total_group_size > 0 else 1
 
             for i in range(1, num_sections + 1):
-                section_code = f"{cls.code}_{subject.code}_{i:02d}"
+                # Code LHP: dùng mã lớp đầu tiên + mã môn + số thứ tự
+                base_class_code = sample_class.code  # ví dụ: 26SPIT1
+                section_code = f"{base_class_code}_{subject.code}_{i:02d}"
 
-                course_section, created = CourseSection.objects.get_or_create(
+                section, is_created = CourseSection.objects.get_or_create(
                     semester=semester,
                     code=section_code,
                     defaults={
@@ -162,10 +584,11 @@ def generate_course_sections_for_semester(semester: Semester, department_code: s
                         "planned_periods": total_periods,
                     },
                 )
-                # Gắn class vào (nếu sau này bạn cho gộp lớp, có thể thay đổi logic ở đây)
-                course_section.classes.add(cls)
+                # Gán tất cả lớp trong nhóm ngành–khoá vào LHP này
+                section.classes.add(*group_classes)
 
-                created_sections.append(course_section)
+                if is_created:
+                    created_sections.append(section)
 
     return created_sections
 
@@ -197,24 +620,51 @@ def get_weeks_for_section(section: CourseSection, semester: Semester):
 
     return filtered
 
+# def periods_per_session_for_subject(section: CourseSection) -> int:
+#     """
+#     Xác định số tiết mỗi buổi:
+#     - Lý thuyết: 5 tiết/buổi
+#     - Thực hành / Tích hợp: 4 tiết/buổi
+#     - Thực tập: không xếp phòng, sẽ bỏ qua ở auto_schedule
+#     """
+#     stype = section.subject.subject_type
+#     if stype == "LT":
+#         return 5
+#     elif stype in ("TH", "TICH_HOP"):
+#         return 4
+#     elif stype == "THUC_TAP":
+#         return 0
+#     # mặc định
+#     return 5
+
 def periods_per_session_for_subject(section: CourseSection) -> int:
     """
-    Xác định số tiết mỗi buổi:
-    - Lý thuyết: 5 tiết/buổi
-    - Thực hành / Tích hợp: 4 tiết/buổi
-    - Thực tập: không xếp phòng, sẽ bỏ qua ở auto_schedule
+    Xác định số tiết/giờ mỗi buổi cho LHP này dựa trên mã môn:
+
+    - Môn lý thuyết: mã bắt đầu bằng 'MH'  -> 5 tiết/buổi
+    - Mô-đun / Thực hành / Tích hợp: mã bắt đầu bằng 'MĐ' hoặc 'MD' -> 4 giờ/buổi
+    - Môn thực tập (thực tập doanh nghiệp...): mã bắt đầu bằng 'TT' -> 0 (không xếp TKB trong phòng)
     """
-    stype = section.subject.subject_type
-    if stype == "LT":
-        return 5
-    elif stype in ("TH", "TICH_HOP"):
-        return 4
-    elif stype == "THUC_TAP":
+    code = (section.subject.code or "").upper().strip()
+
+    # Thực tập: không xếp TKB trong phòng
+    if code.startswith("TT"):
         return 0
-    # mặc định
+
+    # Mô đun / Thực hành / Tích hợp
+    if code.startswith("MĐ") or code.startswith("MD"):
+        return 4
+
+    # Môn lý thuyết (mặc định cho MH)
+    if code.startswith("MH"):
+        return 5
+
+    # Nếu không rõ, tạm coi như lý thuyết
     return 5
 
-def get_candidate_rooms_for_section(section: CourseSection):
+
+
+# def get_candidate_rooms_for_section(section: CourseSection):
     """
     Lấy danh sách phòng phù hợp cho Lớp học phần (theo loại phòng, sức chứa, chuyên môn).
     Nếu môn là THUC_TAP -> trả [] để slot có thể room=None.
@@ -242,6 +692,40 @@ def get_candidate_rooms_for_section(section: CourseSection):
     majors = set(cls.major_id for cls in section.classes.all())
     if majors:
         qs = qs.filter(Q(allowed_majors__isnull=True) | Q(allowed_majors__in=majors)).distinct()
+
+    return list(qs)
+def get_candidate_rooms_for_section(section: CourseSection):
+    """
+    Lấy danh sách phòng phù hợp cho Lớp học phần:
+    - Nếu môn là 'thực tập' (per_session = 0) -> trả [] (không cần phòng)
+    """
+    subject = section.subject
+    total_students = sum(cls.size for cls in section.classes.all())
+
+    # Nếu môn thực tập (không dạy trong phòng)
+    from .services import periods_per_session_for_subject  # nếu cùng file thì có thể bỏ import này
+    if periods_per_session_for_subject(section) == 0:
+        return []
+
+    qs = Room.objects.all()
+
+    # Loại phòng
+    if subject.required_room_type:
+        qs = qs.filter(room_type=subject.required_room_type)
+
+    # Sức chứa
+    qs = qs.filter(capacity__gte=total_students)
+
+    # Nhóm chuyên môn
+    if subject.specialization_group:
+        qs = qs.filter(capabilities=subject.specialization_group)
+
+    # Ngành ưu tiên của phòng
+    majors = set(cls.major_id for cls in section.classes.all())
+    if majors:
+        qs = qs.filter(
+            Q(allowed_majors__isnull=True) | Q(allowed_majors__in=majors)
+        ).distinct()
 
     return list(qs)
 
@@ -617,24 +1101,102 @@ def semi_auto_schedule_section(
 
     return created_slots, None
 
-def generate_semester_weeks(semester: Semester, total_weeks: int = 20):
+# def generate_semester_weeks_OLD(semester: Semester, total_weeks: int = 20):
+#     """
+#     Sinh các bản ghi SemesterWeek cho 1 Học kỳ:
+#     - Mặc định: 20 tuần liên tiếp kể từ semester.start_date
+#     - is_break = False hết, sau này bạn có thể set tuần nghỉ riêng nếu cần.
+
+#     Nếu đã có SemesterWeek rồi thì hàm sẽ bỏ qua (không tạo trùng index).
+#     """
+#     start = semester.start_date
+
+#     created = []
+
+#     for i in range(total_weeks):
+#         week_index = i + 1
+#         week_start = start + timedelta(weeks=i)
+#         week_end = week_start + timedelta(days=6)
+
+#         sw, is_created = SemesterWeek.objects.get_or_create(
+#             semester=semester,
+#             index=week_index,
+#             defaults={
+#                 "start_date": week_start,
+#                 "end_date": week_end,
+#                 "is_break": False,
+#             },
+#         )
+#         if is_created:
+#             created.append(sw)
+
+#     return created
+
+def _date_in_any_break(d, breaks):
     """
-    Sinh các bản ghi SemesterWeek cho 1 Học kỳ:
-    - Mặc định: 20 tuần liên tiếp kể từ semester.start_date
-    - is_break = False hết, sau này bạn có thể set tuần nghỉ riêng nếu cần.
-
-    Nếu đã có SemesterWeek rồi thì hàm sẽ bỏ qua (không tạo trùng index).
+    Kiểm tra 1 ngày có nằm trong bất kỳ khoảng SemesterBreak nào không.
+    breaks: list[SemesterBreak]
     """
-    start = semester.start_date
+    for br in breaks:
+        if br.start_date and br.end_date and br.start_date <= d <= br.end_date:
+            return True
+    return False
 
-    created = []
 
-    for i in range(total_weeks):
-        week_index = i + 1
-        week_start = start + timedelta(weeks=i)
+def _jump_after_break(d, breaks):
+    """
+    Nếu d nằm trong 1 khoảng SemesterBreak, nhảy tới ngày sau khi kết thúc khoảng đó.
+    Nếu không nằm trong khoảng nào -> trả chính d.
+    """
+    for br in breaks:
+        if br.start_date and br.end_date and br.start_date <= d <= br.end_date:
+            return br.end_date + timedelta(days=1)
+    return d
+
+
+def generate_semester_weeks(semester: Semester, delete_old: bool = False):
+    """
+    Sinh các bản ghi SemesterWeek cho 1 Học kỳ dựa vào:
+      - semester.start_date
+      - semester.weeks  (số TUẦN HỌC, KHÔNG tính tuần nghỉ)
+      - các khoảng nghỉ SemesterBreak (Tết, nghỉ giữa kỳ...)
+
+    Quy tắc:
+      - Chỉ tạo tuần HỌC (is_break=False).
+      - Tuần nghỉ được mô tả riêng qua SemesterBreak, KHÔNG tạo SemesterWeek.
+      - Nếu tuần bắt đầu rơi vào khoảng nghỉ -> nhảy qua hết khoảng nghỉ rồi mới đếm tuần học tiếp theo.
+
+    Kết quả:
+      - Trả về (created_count, updated_count)
+    """
+    if not semester.start_date:
+        raise ValueError(f"Semester {semester} chưa có start_date, không thể sinh tuần.")
+
+    # Số tuần học cần sinh. Nếu chưa nhập, tạm cho 15.
+    teaching_weeks = semester.weeks or 15
+
+    # Lấy danh sách khoảng nghỉ của học kỳ
+    breaks = list(SemesterBreak.objects.filter(semester=semester))
+
+    if delete_old:
+        SemesterWeek.objects.filter(semester=semester).delete()
+
+    created = 0
+    updated = 0
+
+    current_date = semester.start_date
+    week_index = 1
+
+    while week_index <= teaching_weeks:
+        # Nếu ngày hiện tại rơi vào kỳ nghỉ -> nhảy qua
+        if _date_in_any_break(current_date, breaks):
+            current_date = _jump_after_break(current_date, breaks)
+            continue
+
+        week_start = current_date
         week_end = week_start + timedelta(days=6)
 
-        sw, is_created = SemesterWeek.objects.get_or_create(
+        sw, is_created = SemesterWeek.objects.update_or_create(
             semester=semester,
             index=week_index,
             defaults={
@@ -644,9 +1206,16 @@ def generate_semester_weeks(semester: Semester, total_weeks: int = 20):
             },
         )
         if is_created:
-            created.append(sw)
+            created += 1
+        else:
+            updated += 1
 
-    return created
+        # Chuẩn bị cho tuần tiếp theo
+        week_index += 1
+        current_date = week_start + timedelta(weeks=1)
+
+    return created, updated
+
 
 def auto_schedule_single_section_fixed(section: CourseSection):
     """

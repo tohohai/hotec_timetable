@@ -1,4 +1,4 @@
-from django.contrib import admin
+from django.contrib import admin,messages
 from .models import (
     AcademicYear, Semester, SemesterBreak, PublicHoliday, SemesterWeek, PeriodSlot,
     TrainingLevel, Department, SpecializationGroup, Major, Curriculum, CurriculumSubject,
@@ -10,7 +10,6 @@ from .models import (
     # ExamSession, ExamInvigilationAssignment, ExamGradingAssignment,
     ResearchCategory, ResearchProject, EnterpriseInternship, ProfessionalDevelopment, ResearchMember
 )
-
 
 # ==============================
 # 1. TIME CONFIG
@@ -92,11 +91,7 @@ class MajorAdmin(admin.ModelAdmin):
     search_fields = ("code", "name")
 
 
-@admin.register(Curriculum)
-class CurriculumAdmin(admin.ModelAdmin):
-    list_display = ("major", "intake_year", "name")
-    list_filter = ("major", "intake_year")
-    inlines = [CurriculumSubjectInline]
+
 
 
 # ==============================
@@ -180,11 +175,11 @@ class SubjectAdmin(admin.ModelAdmin):
     list_display = (
         "code", "name", "subject_type", "major",
         "managing_department", "total_periods", "max_class_size",
-        "required_room_type", "specialization_group", "is_external_managed"
+        "required_room_type", "specialization_group", "is_external_managed","semester_number"
     )
-    list_filter = ("subject_type", "managing_department", "required_room_type")
-    search_fields = ("code", "name")
-    inlines = [SubjectChapterInline, AssessmentComponentInline]
+    # list_filter = ("subject_type", "managing_department", "required_room_type")
+    # search_fields = ("code", "name")
+    # inlines = [SubjectChapterInline, AssessmentComponentInline]
 
 
 # ==============================
@@ -358,5 +353,65 @@ class ResearchCategoryAdmin(admin.ModelAdmin):
     list_display = ("code", "name", "unit_label", "default_hours_per_unit")
     search_fields = ("code", "name")
 
+# @admin.register(Curriculum)
+# class CurriculumAdmin(admin.ModelAdmin):
+#     list_display = ("major", "intake_year", "name")
+#     list_filter = ("major", "intake_year")
+#     inlines = [CurriculumSubjectInline]
+
+@admin.register(Curriculum)
+class CurriculumAdmin(admin.ModelAdmin):
+    list_display = ("major", "intake_year", "name")
+    list_filter = ("major__level", "major", "intake_year")
+    search_fields = ("major__name", "intake_year__code", "name")
+    actions = ["generate_curriculum_subjects_action", "overwrite_curriculum_subjects_action"]
+
+    def generate_curriculum_subjects_action(self, request, queryset):
+        """
+        Action: tạo CurriculumSubject cho các CTĐT được chọn
+        (không đụng những record đã tồn tại).
+        """
+        total_created = total_updated = total_skipped = 0
+
+        for cur in queryset:
+            res = cur.generate_curriculum_subjects(overwrite=False)
+            total_created += res["created"]
+            total_updated += res["updated"]
+            total_skipped += res["skipped"]
+
+        self.message_user(
+            request,
+            f"Đã tạo mới {total_created} CurriculumSubject, "
+            f"cập nhật {total_updated}, bỏ qua {total_skipped}.",
+            messages.SUCCESS,
+        )
+
+    generate_curriculum_subjects_action.short_description = (
+        "Generate môn cho CTĐT (không ghi đè cái đã có)"
+    )
+
+    def overwrite_curriculum_subjects_action(self, request, queryset):
+        """
+        Action: cập nhật lại info (semester_index, total_periods, is_optional)
+        cho tất cả CurriculumSubject của các CTĐT được chọn.
+        """
+        total_created = total_updated = total_skipped = 0
+
+        for cur in queryset:
+            res = cur.generate_curriculum_subjects(overwrite=True)
+            total_created += res["created"]
+            total_updated += res["updated"]
+            total_skipped += res["skipped"]
+
+        self.message_user(
+            request,
+            f"[Overwrite] Đã tạo mới {total_created}, "
+            f"cập nhật {total_updated}, bỏ qua {total_skipped}.",
+            messages.WARNING,
+        )
+
+    overwrite_curriculum_subjects_action.short_description = (
+        "Generate/ghi đè CurriculumSubject theo Subject"
+    )
 
 

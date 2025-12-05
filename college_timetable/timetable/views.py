@@ -4,19 +4,16 @@ from django.http import HttpResponse
 from django.contrib import messages
 from .forms import ExcelUploadForm
 from . import import_services
-
 import csv
-
-def home(request):
-    return render(request, "timetable/home.html")
+from urllib.parse import urlencode
 
 from .models import (
     AcademicYear,
-    CourseSection,
+    CourseSection,Department,
     Instructor,   
     Room,
     ResearchMember,
-    StudentClass,
+    StudentClass,Semester,
     TeachingSlot,   
     WorkloadReductionType
 )
@@ -33,14 +30,16 @@ from .services import (
     auto_schedule_whole_semester_fixed,
     semi_auto_schedule_section,
     calculate_instructor_workload,
-)
-
-from .services import (
-    auto_schedule_whole_semester_fixed,
-    semi_auto_schedule_section,
+    auto_schedule, # Xem lại đúng tên này không?    
+    generate_course_sections_for_semester,  
 )
 
 from .import_services import import_all_from_excel
+
+
+
+def home(request):
+    return render(request, "timetable/home.html")
 
 def data_import_all_view(request):
     result = None
@@ -57,7 +56,25 @@ def data_import_all_view(request):
         },
     )
 
+# def section_export_excel(request):
+#     """
+#     Tạm thời: stub để tránh NoReverseMatch.
+#     Sau này bạn thay bằng logic export thật bằng openpyxl.
+#     """
+#     semester_id = request.GET.get("semester_id")
+#     semester = get_object_or_404(Semester, pk=semester_id)
 
+#     # TODO: viết code xuất Excel tại đây
+#     return HttpResponse(f"Export Excel cho học kỳ: {semester}", content_type="text/plain")
+def section_export_excel(request, pk):
+    section = get_object_or_404(CourseSection, pk=pk)
+
+    # TODO: sau này bạn dùng openpyxl để xuất file thật.
+    # Tạm thời trả text để test cho nhanh:
+    return HttpResponse(
+        f"Export Excel cho LHP: {section.code}",
+        content_type="text/plain",
+    )
 
 DAYS = [
     (1, "Thứ 2"),
@@ -87,7 +104,7 @@ def build_timetable_grid(slots):
 
     return grid
 
-def semester_overview(request): 
+# def semester_overview(request): 
     """
     Trang chọn Học kỳ + Khoa, hiển thị danh sách Lớp học phần.
     Có nút chạy auto_schedule cho cả học kỳ.
@@ -130,6 +147,180 @@ def semester_overview(request):
         "semester": semester,
         "department_code": department_code,
         "sections": sections,
+        "auto_result": auto_result,
+    }
+    return render(request, "timetable/semester_overview.html", context)
+
+# def semester_overview(request):
+#     """
+#     Trang chọn Học kỳ + Khoa, hiển thị danh sách Lớp học phần.
+#     Có nút chạy auto_schedule cho cả học kỳ.
+#     """
+#     sections = None
+#     semester = None
+#     department_code = None
+#     auto_result = None
+
+#     # Cho phép nhận từ GET hoặc POST để tiện filter qua url
+#     data = request.POST if request.method == "POST" else request.GET
+#     form = SemesterChoiceForm(data or None)
+
+#     if form.is_valid():
+#         semester = form.cleaned_data["semester"]
+#         department_code = form.cleaned_data.get("department_code") or None
+
+#         # Nếu bấm nút auto_schedule (chỉ khi POST)
+#         if request.method == "POST" and "run_auto" in request.POST:
+#             ok, fail = auto_schedule_whole_semester_fixed(
+#                 semester,
+#                 department_code=department_code,
+#                 reset_existing=True,
+#             )
+#             auto_result = {
+#                 "ok_count": len(ok),
+#                 "fail_count": len(fail),
+#                 "fail": fail,
+#             }
+
+#         # ---- LỌC SECTIONS ----
+#         qs = CourseSection.objects.filter(semester=semester)
+
+#         # chỉ lọc theo khoa nếu có chọn
+#         if department_code:
+#             qs = qs.filter(classes__department__code=department_code)
+
+#         sections = (
+#             qs.distinct()
+#               .select_related("subject")          # nếu instructor là FK thì thêm "instructor"
+#               .prefetch_related("classes")        # để hiển thị lớp nhanh trong template
+#               .order_by("subject__code", "id")
+#         )
+#     else:
+#         # lần đầu vào trang (chưa chọn), hiển thị form trống
+#         form = SemesterChoiceForm()
+
+#     context = {
+#         "form": form,
+#         "semester": semester,
+#         "department_code": department_code,
+#         "sections": sections,
+#         "auto_result": auto_result,
+#     }
+#     return render(request, "timetable/semester_overview.html", context)
+
+# def semester_overview(request):
+#     """
+#     Trang chọn Năm học + Học kỳ (+ Khoa) để:
+#       - Xem danh sách Lớp học phần
+#       - Xếp TKB tự động cho các LHP phù hợp
+#     """
+#     form = SemesterChoiceForm(request.POST or None)
+#     selected_semester = None
+#     selected_department = None
+#     auto_result = None
+
+#     if request.method == "POST" and form.is_valid():
+#         selected_semester = form.cleaned_data.get("semester")
+#         selected_department = form.cleaned_data.get("department")  # nếu form có field này
+
+#         # 1) Nút "Xem lớp học phần"
+#         if "view_sections" in request.POST:
+#             params = {}
+#             if selected_semester:
+#                 params["semester_id"] = selected_semester.id
+#             if selected_department:
+#                 params["department_id"] = selected_department.id
+
+#             url = reverse("timetable:section_list")
+#             if params:
+#                 url = f"{url}?{urlencode(params)}"
+#             return redirect(url)
+
+#         # 2) Nút "Xếp TKB tự động"
+#         if "auto_schedule" in request.POST and selected_semester:
+#             # department_code: dùng mã Khoa phụ trách môn (CNTT, ...)
+#             dept_code = selected_department.code if selected_department else None
+#             ok_sections, fail_sections = auto_schedule(
+#                 selected_semester,
+#                 department_code=dept_code,
+#             )
+#             auto_result = {
+#                 "ok": ok_sections,
+#                 "fail": fail_sections,
+#             }
+
+#     context = {
+#         "form": form,
+#         "selected_semester": selected_semester,
+#         "selected_department": selected_department,
+#         "auto_result": auto_result,
+#     }
+#     return render(request, "timetable/semester_overview.html", context)
+
+def semester_overview(request):
+    """
+    Trang chọn Năm học + Học kỳ (+ Khoa) để:
+      - Sinh Lớp học phần (nếu chưa có)
+      - Xem danh sách Lớp học phần
+      - Xếp TKB tự động cho các LHP phù hợp
+    """
+    form = SemesterChoiceForm(request.POST or None)
+    selected_semester = None
+    selected_department = None
+    auto_result = None
+
+    if request.method == "POST" and form.is_valid():
+        selected_semester = form.cleaned_data.get("semester")
+        # tuỳ form bạn đặt field là 'department' hay 'department_code'
+        selected_department = form.cleaned_data.get("department")
+
+        # Lấy mã khoa (nếu có)
+        dept_code = selected_department.code if selected_department else None
+
+        # 1) NÚT "Xem lớp học phần"
+        if "view_sections" in request.POST and selected_semester:
+            # --- sinh LHP nếu chưa có cho kỳ + khoa này ---
+            qs = CourseSection.objects.filter(semester=selected_semester)
+            if dept_code:
+                qs = qs.filter(classes__department__code=dept_code)
+
+            if not qs.exists():
+                created_sections = generate_course_sections_for_semester(
+                    semester=selected_semester,
+                    department_code=dept_code,  # None = tất cả khoa
+                )
+                messages.success(
+                    request,
+                    f"Đã sinh {len(created_sections)} lớp học phần cho học kỳ {selected_semester}."
+                )
+
+            # redirect sang trang danh sách LHP
+            params = {}
+            if selected_semester:
+                params["semester_id"] = selected_semester.id
+            if selected_department:
+                params["department_id"] = selected_department.id
+
+            url = reverse("timetable:section_list")
+            if params:
+                url = f"{url}?{urlencode(params)}"
+            return redirect(url)
+
+        # 2) NÚT "Xếp TKB tự động"
+        if "auto_schedule" in request.POST and selected_semester:
+            ok_sections, fail_sections = auto_schedule(
+                selected_semester,
+                department_code=dept_code,
+            )
+            auto_result = {
+                "ok": ok_sections,
+                "fail": fail_sections,
+            }
+
+    context = {
+        "form": form,
+        "selected_semester": selected_semester,
+        "selected_department": selected_department,
         "auto_result": auto_result,
     }
     return render(request, "timetable/semester_overview.html", context)
@@ -200,17 +391,107 @@ def section_schedule(request, pk):
         },
     )
 
+# def section_list(request):
+#     """
+#     Danh sách Lớp học phần, để sau này chọn vào xếp bán tự động / chỉnh tay.
+#     """
+#     sections = CourseSection.objects.select_related(
+#         "subject", "semester", "student_class", "instructor"
+#     ).order_by("semester__start_date", "code")
+
+#     return render(request, "timetable/section_list.html", {
+#         "sections": sections,
+#     })
+
+# def section_list(request):
+    """
+    Danh sách Lớp học phần.
+    Có thể lọc theo:
+      - Học kỳ: ?semester_id=...
+      - Khoa phụ trách môn: ?department_id=...
+    """
+    qs = CourseSection.objects.select_related(
+        "subject",
+        "semester",
+        "instructor",
+    ).prefetch_related(
+        "classes",   # vì CourseSection.classes là ManyToMany
+    )
+
+    semester_id = request.GET.get("semester_id")
+    department_id = request.GET.get("department_id")
+
+    semester = None
+    department = None
+
+    if semester_id:
+        qs = qs.filter(semester_id=semester_id)
+        semester = Semester.objects.filter(id=semester_id).first()
+
+    if department_id:
+        # dùng khoa phụ trách môn: managing_department
+        qs = qs.filter(subject__managing_department_id=department_id)
+        department = Department.objects.filter(id=department_id).first()
+
+    qs = qs.order_by(
+        "semester__academic_year__code",
+        "semester__code",
+        "code",
+    )
+
+    context = {
+        "sections": qs,
+        "semester": semester,
+        "department": department,
+        "semester_id": semester_id,
+        "department_id": department_id,
+    }
+    return render(request, "timetable/section_list.html", context)
+
 def section_list(request):
     """
-    Danh sách Lớp học phần, để sau này chọn vào xếp bán tự động / chỉnh tay.
+    Danh sách Lớp học phần.
+    Có thể lọc theo:
+      - Học kỳ: ?semester_id=...
+      - Khoa phụ trách môn: ?department_id=...
     """
-    sections = CourseSection.objects.select_related(
-        "subject", "semester", "student_class", "instructor"
-    ).order_by("semester__start_date", "code")
+    qs = CourseSection.objects.select_related(
+        "subject",
+        "semester",
+        "instructor",
+    ).prefetch_related(
+        "classes",
+    )
 
-    return render(request, "timetable/section_list.html", {
-        "sections": sections,
-    })
+    semester_id = request.GET.get("semester_id")
+    department_id = request.GET.get("department_id")
+
+    semester = None
+    department = None
+
+    if semester_id:
+        qs = qs.filter(semester_id=semester_id)
+        semester = Semester.objects.filter(id=semester_id).first()
+
+    if department_id:
+        # dùng Khoa phụ trách môn: managing_department
+        qs = qs.filter(subject__managing_department_id=department_id)
+        department = Department.objects.filter(id=department_id).first()
+
+    qs = qs.order_by(
+        "semester__academic_year__code",
+        "semester__code",
+        "code",
+    )
+
+    context = {
+        "sections": qs,
+        "semester": semester,
+        "department": department,
+        "semester_id": semester_id,
+        "department_id": department_id,
+    }
+    return render(request, "timetable/section_list.html", context)
 
 def class_timetable_view(request):
     """
@@ -523,6 +804,27 @@ IMPORT_CONFIG = {
         "columns": ["code", "name", "major_code", "department_code", "required_room_type_code", "specialization_group_code", "total_periods", "form", "semester_index"],
         "description": "Danh mục môn dùng để xếp TKB.",
     },
+    "curriculums": {
+        "label": "Chương trình đào tạo (Curriculum)",
+        "function": import_services.import_curriculums_from_excel,
+        "columns": ["major_code", "intake_year_code", "name"],
+        "description": "Mỗi Ngành + Khoá tuyển tạo 1 Curriculum.",
+    },
+    "curriculum_subjects": {
+        "label": "Môn trong CTĐT (CurriculumSubject)",
+        "function": import_services.import_curriculum_subjects_from_excel,
+        "columns": [
+            "curriculum_major_code",
+            "curriculum_intake_year_code",
+            "subject_code",
+            "semester_index",
+            "is_optional",
+            "total_periods",
+        ],
+        "description": "Gán Môn vào từng CTĐT, học kỳ, tự chọn/BB, số tiết.",
+    },
+
+
 }
 
 
@@ -584,3 +886,4 @@ def timetable_by_instructor(request):
     TKB theo Giảng viên.
     """
     return render(request, "timetable/timetable_by_instructor.html")
+

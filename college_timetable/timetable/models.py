@@ -1,5 +1,7 @@
-from django.db import models
 
+from django.core.validators import MinValueValidator, MaxValueValidator
+from django.db import models, transaction
+from django.db.models import Q
 # ==================================================
 # 1. THỜI GIAN & CẤU HÌNH
 # ==================================================
@@ -34,6 +36,18 @@ class Semester(models.Model):
 
     def __str__(self):
         return f"{self.code} ({self.academic_year.code})"
+    
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+
+        # Sau khi lưu Semester, nếu có start_date và weeks thì tự sinh tuần
+        try:
+            from .services import generate_semester_weeks
+            if self.start_date and self.weeks:
+                generate_semester_weeks(self, delete_old=True)
+        except Exception as e:
+            # Không nên raise để tránh lỗi khi lưu Admin, chỉ log nếu cần
+            print(f"[Semester.save] Lỗi generate_semester_weeks: {e}")    
 
 class SemesterBreak(models.Model):
     """
@@ -169,11 +183,119 @@ class Major(models.Model):
     def __str__(self):
         return f"{self.name} - {self.level.code}"
 
+# class Curriculum(models.Model):
+#     """
+#     Chương trình đào tạo theo Khoá.
+#     Mỗi Ngành + Khoá tuyển (Năm học) có 1 Curriculum riêng.
+#     """
+#     major = models.ForeignKey(Major, on_delete=models.CASCADE, verbose_name="Ngành")
+#     intake_year = models.ForeignKey(
+#         AcademicYear, on_delete=models.CASCADE, verbose_name="Khoá tuyển/Năm nhập học"
+#     )
+#     name = models.CharField(
+#         max_length=100, blank=True, verbose_name="Tên CTĐT (tuỳ chọn, để phân biệt)"
+#     )
+
+#     class Meta:
+#         verbose_name_plural = "5.1 Chương trình đào tạo theo Khoá"
+#         unique_together = ("major", "intake_year")
+
+#     def __str__(self):
+#         return f"{self.major.name} - Khoá {self.intake_year.code}"
+
+
+# class Curriculum(models.Model):
+#     major = models.ForeignKey(Major, on_delete=models.CASCADE, verbose_name="Ngành")
+#     intake_year = models.ForeignKey(
+#         AcademicYear, on_delete=models.CASCADE, verbose_name="Khoá tuyển/Năm nhập học"
+#     )
+#     name = models.CharField(
+#         max_length=100, blank=True, verbose_name="Tên CTĐT (tuỳ chọn, để phân biệt)"
+#     )
+
+#     class Meta:
+#         verbose_name_plural = "5.1 Chương trình đào tạo theo Khoá"
+#         unique_together = ("major", "intake_year")
+
+#     def __str__(self):
+#         return f"{self.major.name} - Khoá {self.intake_year.code}"
+
+#     # 👇 Thêm hàm này
+#     @transaction.atomic
+#     def generate_curriculum_subjects(self, overwrite=False):
+#         """
+#         Tự động sinh CurriculumSubject cho CTĐT này.
+
+#         Quy tắc:
+#         - Lấy tất cả Subject:
+#             + môn chuyên ngành: subject.major == self.major
+#             + môn chung: subject.major is null
+#         - Học kỳ:
+#             + ưu tiên subject.semester_number
+#             + giới hạn trong [1 .. duration_semesters] theo bậc đào tạo
+#         - Môn tự chọn: hiện tại xử lý như môn thường (is_optional=False)
+
+#         Tham số:
+#         - overwrite=False: nếu True thì update lại semester_index, total_periods,
+#           is_optional cho những CurriculumSubject đã tồn tại.
+#         """
+#         from .models import Subject, CurriculumSubject  # tránh import vòng
+
+#         # Số học kỳ tối đa của CTĐT (TC: 4, CD: 5...)
+#         duration = self.major.level.duration_semesters or 5
+
+#         # Lấy môn chuyên ngành + môn chung
+#         subjects = Subject.objects.filter(
+#             Q(major=self.major) | Q(major__isnull=True)
+#         ).distinct()
+
+#         created_count = 0
+#         updated_count = 0
+#         skipped_count = 0
+
+#         for subj in subjects:
+#             # Học kỳ gốc từ môn
+#             sem = subj.semester_number or 1
+
+#             # Nếu vượt quá số học kỳ CTĐT thì ép về học kỳ cuối
+#             if sem > duration:
+#                 sem = duration
+
+#             defaults = {
+#                 "semester_index": sem,
+#                 "total_periods": subj.total_periods,
+#                 "is_optional": False,  # hiện tại treat như môn thường
+#             }
+
+#             cs, created = CurriculumSubject.objects.get_or_create(
+#                 curriculum=self,
+#                 subject=subj,
+#                 defaults=defaults,
+#             )
+
+#             if created:
+#                 created_count += 1
+#             else:
+#                 if overwrite:
+#                     # cập nhật lại thông tin nếu muốn
+#                     for field, value in defaults.items():
+#                         setattr(cs, field, value)
+#                     cs.save(update_fields=list(defaults.keys()))
+#                     updated_count += 1
+#                 else:
+#                     skipped_count += 1
+
+#         return {
+#             "created": created_count,
+#             "updated": updated_count,
+#             "skipped": skipped_count,
+#         }
+
+# models.py
+from django.db import models, transaction
+from django.db.models import Q
+
 class Curriculum(models.Model):
-    """
-    Chương trình đào tạo theo Khoá.
-    Mỗi Ngành + Khoá tuyển (Năm học) có 1 Curriculum riêng.
-    """
     major = models.ForeignKey(Major, on_delete=models.CASCADE, verbose_name="Ngành")
     intake_year = models.ForeignKey(
         AcademicYear, on_delete=models.CASCADE, verbose_name="Khoá tuyển/Năm nhập học"
@@ -188,6 +310,70 @@ class Curriculum(models.Model):
 
     def __str__(self):
         return f"{self.major.name} - Khoá {self.intake_year.code}"
+
+    @transaction.atomic
+    def generate_curriculum_subjects(self, overwrite=False):
+        """
+        Sinh CurriculumSubject cho CTĐT này.
+
+        Quy tắc:
+        - Lấy Subject:
+            + Môn chuyên ngành: subject.major == self.major
+            + Môn chung: subject.major is null
+        - Học kỳ:
+            + ưu tiên subject.semester_number
+            + ép vào [1 .. duration_semesters] (theo bậc đào tạo: TC thường 4, CD thường 5)
+        - Môn tự chọn hiện tại = môn thường (is_optional=False)
+
+        overwrite=False:
+            - False: nếu đã có CurriculumSubject thì bỏ qua
+            - True: update lại semester_index, total_periods, is_optional
+        """
+        from .models import Subject, CurriculumSubject  # tránh import vòng
+
+        duration = self.major.level.duration_semesters or 5  # 4 hoặc 5 tuỳ bậc
+
+        subjects = Subject.objects.filter(
+            Q(major=self.major) | Q(major__isnull=True)
+        ).distinct()
+
+        created = updated = skipped = 0
+
+        for subj in subjects:
+            sem = subj.semester_number or 1
+            if sem > duration:
+                sem = duration
+            if sem < 1:
+                sem = 1
+
+            defaults = {
+                "semester_index": sem,
+                "total_periods": subj.total_periods,
+                "is_optional": False,
+            }
+
+            cs, is_created = CurriculumSubject.objects.get_or_create(
+                curriculum=self,
+                subject=subj,
+                defaults=defaults,
+            )
+
+            if is_created:
+                created += 1
+            else:
+                if overwrite:
+                    for field, value in defaults.items():
+                        setattr(cs, field, value)
+                    cs.save(update_fields=list(defaults.keys()))
+                    updated += 1
+                else:
+                    skipped += 1
+
+        return {
+            "created": created,
+            "updated": updated,
+            "skipped": skipped,
+        }
 
 # ==================================================
 # 4. MÔN HỌC, CẤU TRÚC MÔN
@@ -280,6 +466,12 @@ class Subject(models.Model):
         default=False,
         verbose_name="Có chấm thi riêng (sau đợt thi)",
         help_text="Mặc định chỉ bật đối với các môn thực hành trên máy.",
+    )
+    semester_number = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        verbose_name="Học kỳ (số)",
+        help_text="Nhập số học kỳ: 1, 2, 3, 4, 5"
     )
     class Meta:
         verbose_name_plural = "7. Quản lý Môn học"

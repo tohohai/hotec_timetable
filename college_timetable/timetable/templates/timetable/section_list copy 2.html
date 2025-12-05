@@ -85,19 +85,14 @@
             </td>
             <td>{{ s.note }}</td>
             <td class="text-center">
-              {# View xem/xếp TKB: cần có url name 'timetable:section_schedule' trong urls.py #}
               <a href="{% url 'timetable:section_schedule' s.id %}"
                  class="btn btn-sm btn-outline-primary mb-1">
                 Xem / xếp TKB
               </a>
-
-              {# NÚT XUẤT EXCEL – HIỆN TẠI CHƯA CÓ URL, NÊN COMMENT HẲN ĐI ĐỂ KHỎI NoReverseMatch #}
-              {#
-              <a href="{% url 'timetable:section_export_excel' s.id %}"
-                 class="btn btn-sm btn-outline-success">
-                Xuất Excel
-              </a>
-              #}
+              {# Nếu sau này có view in Excel: #}
+              {# <a href="{% url 'timetable:section_export_excel' s.id %}" class="btn btn-sm btn-outline-success">
+                   Xuất Excel
+                 </a> #}
             </td>
           </tr>
         {% endfor %}

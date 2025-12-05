@@ -2,8 +2,9 @@ from openpyxl import load_workbook
 from .models import (
     Department, TrainingLevel, Major,
     AcademicYear, Semester,
-    RoomType, SpecializationGroup, Room,
-    Instructor, StudentClass, Subject,RoomCapability
+    RoomType, SpecializationGroup, Room,RoomCapability,
+    Instructor, StudentClass, Subject,
+    Curriculum,  CurriculumSubject
 )
 
 def _load_ws(file):
@@ -24,6 +25,167 @@ def _get_ws(file_or_ws):
 
 
 # =============== IMPORT TỪNG MODEL (ĐÃ SỬA ĐỂ NHẬN WS) ===============
+
+def import_curriculums_from_excel(file_or_ws):
+    """
+    Sheet Curriculums:
+    A: major_code          (VD: CĐ_CNTT)
+    B: intake_year_code    (VD: 2025-2026)
+    C: name                (tuỳ chọn, có thể để trống)
+    """
+    ws = _get_ws(file_or_ws)
+    created = updated = 0
+    errors = []
+
+    for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        major_code, intake_year_code, name = row[:3]
+
+        # bỏ qua dòng trống hoặc thiếu thông tin chính
+        if not major_code or not intake_year_code:
+            continue
+
+        try:
+            major = Major.objects.get(code=str(major_code).strip())
+        except Major.DoesNotExist:
+            errors.append(f"Dòng {idx}: Không tìm thấy Ngành '{major_code}'")
+            continue
+
+        try:
+            ay = AcademicYear.objects.get(code=str(intake_year_code).strip())
+        except AcademicYear.DoesNotExist:
+            errors.append(f"Dòng {idx}: Không tìm thấy Năm học '{intake_year_code}'")
+            continue
+
+        try:
+            obj, is_created = Curriculum.objects.update_or_create(
+                major=major,
+                intake_year=ay,
+                defaults={
+                    "name": str(name).strip() if name else "",
+                },
+            )
+            if is_created:
+                created += 1
+            else:
+                updated += 1
+        except Exception as e:
+            errors.append(f"Dòng {idx}: {e}")
+
+    return created, updated, errors
+
+def import_curriculum_subjects_from_excel(file_or_ws):
+    """
+    Sheet CurriculumSubjects:
+    A: curriculum_major_code       (mã Ngành của Curriculum)
+    B: curriculum_intake_year_code (mã Năm học của Curriculum)
+    C: subject_code                (mã Môn)
+    D: semester_index              (Học kỳ trong CTĐT, 1..N; nếu trống sẽ dùng subject.semester_number hoặc 1)
+    E: is_optional                 (1/0; nếu trống = 0)
+    F: total_periods               (override tổng tiết; nếu trống = None)
+    """
+    ws = _get_ws(file_or_ws)
+    created = updated = 0
+    errors = []
+
+    for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        # Đảm bảo list đủ 6 phần tử
+        values = list(row[:6]) + [None] * (6 - len(row[:6]))
+        (
+            major_code,
+            intake_year_code,
+            subject_code,
+            semester_index,
+            is_optional_val,
+            total_periods,
+        ) = values
+
+        if not major_code or not intake_year_code or not subject_code:
+            continue
+
+        # 1. Tìm Major, AcademicYear, Curriculum
+        try:
+            major = Major.objects.get(code=str(major_code).strip())
+        except Major.DoesNotExist:
+            errors.append(f"Dòng {idx}: Không tìm thấy Ngành '{major_code}'")
+            continue
+
+        try:
+            ay = AcademicYear.objects.get(code=str(intake_year_code).strip())
+        except AcademicYear.DoesNotExist:
+            errors.append(f"Dòng {idx}: Không tìm thấy Năm học '{intake_year_code}'")
+            continue
+
+        try:
+            curriculum = Curriculum.objects.get(major=major, intake_year=ay)
+        except Curriculum.DoesNotExist:
+            errors.append(
+                f"Dòng {idx}: Không tìm thấy Curriculum cho Ngành '{major_code}' - Năm '{intake_year_code}'"
+            )
+            continue
+
+        # 2. Tìm Subject
+        try:
+            subject = Subject.objects.get(code=str(subject_code).strip())
+        except Subject.DoesNotExist:
+            errors.append(f"Dòng {idx}: Không tìm thấy Môn '{subject_code}'")
+            continue
+
+        # 3. Xử lý semester_index
+        sem = None
+        if semester_index not in (None, ""):
+            try:
+                sem = int(float(semester_index))
+            except Exception:
+                errors.append(
+                    f"Dòng {idx}: semester_index='{semester_index}' không hợp lệ, dùng subject.semester_number hoặc 1."
+                )
+                sem = None
+
+        if sem is None:
+            sem = subject.semester_number or 1
+
+        # 4. Xử lý is_optional (1/0)
+        is_optional = False
+        if is_optional_val not in (None, ""):
+            try:
+                is_optional = bool(int(is_optional_val))
+            except Exception:
+                errors.append(
+                    f"Dòng {idx}: is_optional='{is_optional_val}' không hợp lệ, dùng 0."
+                )
+                is_optional = False
+
+        # 5. Xử lý total_periods
+        tp = None
+        if total_periods not in (None, ""):
+            try:
+                tp = float(total_periods)
+            except Exception:
+                errors.append(
+                    f"Dòng {idx}: total_periods='{total_periods}' không hợp lệ, để trống (None)."
+                )
+                tp = None
+
+        # 6. Lưu vào DB
+        try:
+            obj, is_created = CurriculumSubject.objects.update_or_create(
+                curriculum=curriculum,
+                subject=subject,
+                defaults={
+                    "semester_index": sem,
+                    "is_optional": is_optional,
+                    "total_periods": tp,
+                },
+            )
+            if is_created:
+                created += 1
+            else:
+                updated += 1
+        except Exception as e:
+            errors.append(f"Dòng {idx}: {e}")
+
+    return created, updated, errors
+
 
 def import_departments_from_excel(file_or_ws):
     """
@@ -456,7 +618,7 @@ def import_instructors_from_excel(file_or_ws):
     return created, updated, errors
 
 
-def import_student_classes_from_excel(file_or_ws):
+#def import_student_classes_from_excel(file_or_ws):
     """
     Sheet StudentClasses:
     A: code
@@ -464,7 +626,9 @@ def import_student_classes_from_excel(file_or_ws):
     C: size
     D: major_code
     E: academic_year_code (Năm nhập học)
-    F: homeroom_teacher_code (Mã GV chủ nhiệm - có thể để trống)
+    F: department
+    G: homeroom_teacher_code (Mã GV chủ nhiệm - có thể để trống)
+
     """
     ws = _get_ws(file_or_ws)
     created = updated = 0
@@ -506,8 +670,177 @@ def import_student_classes_from_excel(file_or_ws):
             errors.append(f"Dòng {idx}: {e}")
     return created, updated, errors
 
+def import_student_classes_from_excel(file_or_ws):
+    """
+    Sheet StudentClasses (theo file bạn gửi):
+    A: code
+    B: name
+    C: size
+    D: major_code
+    E: academic_year_code (Năm nhập học)
+    F: department_code      <-- mới: đọc cột khoa
+    G: homeroom_teacher_code (Mã GV chủ nhiệm - có thể để trống)
+    """
+    ws = _get_ws(file_or_ws)
+    created = updated = 0
+    errors = []
 
-def import_subjects_from_excel(file_or_ws):
+    # Kiểm tra StudentClass có field 'department' không (để set vào defaults)
+    has_department_fk = "department" in {f.name for f in StudentClass._meta.get_fields()}
+
+    for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        # Lấy đúng 7 cột theo thứ tự A..G
+        row = list(row[:7]) + [None] * 7
+        code, name, size, major_code, year_code, dept_code, gv_code = row[:7]
+
+        if not code:
+            continue
+
+        try:
+            major = Major.objects.get(code=str(major_code).strip())
+        except Major.DoesNotExist:
+            errors.append(f"Dòng {idx}: Không tìm thấy Ngành '{major_code}'")
+            continue
+
+        try:
+            ay = AcademicYear.objects.get(code=str(year_code).strip())
+        except AcademicYear.DoesNotExist:
+            errors.append(f"Dòng {idx}: Không tìm thấy Năm học '{year_code}'")
+            continue
+
+        # Department: đọc từ cột F; nếu không có, fallback major.department (nếu model có FK này)
+        department = None
+        if has_department_fk:
+            if dept_code:
+                try:
+                    department = Department.objects.get(code=str(dept_code).strip())
+                except Department.DoesNotExist:
+                    errors.append(f"Dòng {idx}: Không tìm thấy Khoa '{dept_code}'")
+            if department is None:
+                department = getattr(major, "department", None)
+                if department is None:
+                    errors.append(f"Dòng {idx}: Không xác định được Khoa cho lớp (department trống & major không có department). Bỏ qua dòng.")
+                    continue
+
+        # GVCN (tùy chọn)
+        homeroom = None
+        if gv_code:
+            try:
+                homeroom = Instructor.objects.get(code=str(gv_code).strip())
+            except Instructor.DoesNotExist:
+                errors.append(f"Dòng {idx}: Không tìm thấy GV '{gv_code}' (GVCN), bỏ qua GVCN")
+
+        try:
+            obj, is_created = StudentClass.objects.update_or_create(
+                code=str(code).strip(),
+                defaults={
+                    "name": str(name).strip() if name else str(code).strip(),
+                    "size": int(float(size or 0)),
+                    "major": major,
+                    "academic_year": ay,
+                    "homeroom_teacher": homeroom,
+                    **({"department": department} if has_department_fk else {}),
+                },
+            )
+            if is_created:
+                created += 1
+            else:
+                updated += 1
+        except Exception as e:
+            errors.append(f"Dòng {idx}: {e}")
+
+    return created, updated, errors
+
+# def import_subjects_from_excel(file_or_ws):
+#     """
+#     Sheet Subjects (đÃ CHỈNH THEO MODEL Subject MỚI):
+
+#     A: code
+#     B: name
+#     C: major_code
+#     D: managing_department_code
+#     E: subject_type              (TN/TL/TH/BC/KHAC)
+#     F: total_periods
+#     G: max_class_size
+#     H: required_room_type_code
+#     I: specialization_group_code
+#     J: is_external_managed       (1/0)
+#     K: exam_form                 (TN/TL/TH/BC/KHAC, nếu trống dùng subject_type)
+#     L: has_separate_marking      (1/0)
+#     """
+#     ws = _get_ws(file_or_ws)
+#     created = updated = 0
+#     errors = []
+
+#     for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+#         (
+#             code, name, major_code, dept_code,
+#             subject_type, total_periods, max_class_size,
+#             rt_code, group_code,
+#             is_external_managed, exam_form, has_separate_marking,
+#         ) = row[:12]
+
+#         if not code:
+#             continue
+
+#         major = None
+#         if major_code:
+#             try:
+#                 major = Major.objects.get(code=str(major_code).strip())
+#             except Major.DoesNotExist:
+#                 errors.append(f"Dòng {idx}: Không tìm thấy Ngành '{major_code}'")
+
+#         managing_dept = None
+#         if dept_code:
+#             try:
+#                 managing_dept = Department.objects.get(code=str(dept_code).strip())
+#             except Department.DoesNotExist:
+#                 errors.append(f"Dòng {idx}: Không tìm thấy Khoa '{dept_code}'")
+
+#         rt = None
+#         if rt_code:
+#             try:
+#                 rt = RoomType.objects.get(code=str(rt_code).strip())
+#             except RoomType.DoesNotExist:
+#                 errors.append(f"Dòng {idx}: Không tìm thấy Loại phòng '{rt_code}'")
+
+#         group = None
+#         if group_code:
+#             try:
+#                 group = SpecializationGroup.objects.get(code=str(group_code).strip())
+#             except SpecializationGroup.DoesNotExist:
+#                 errors.append(f"Dòng {idx}: Không tìm thấy Nhóm CM '{group_code}'")
+
+#         subject_type = (subject_type or "").strip() or "KHAC"
+#         exam_form = (exam_form or "").strip() or subject_type
+
+#         try:
+#             obj, is_created = Subject.objects.update_or_create(
+#                 code=str(code).strip(),
+#                 defaults={
+#                     "name": str(name).strip() if name else "",
+#                     "major": major,
+#                     "managing_department": managing_dept,
+#                     "subject_type": subject_type,
+#                     "total_periods": float(total_periods or 0),
+#                     "max_class_size": int(max_class_size or 35),
+#                     "required_room_type": rt,
+#                     "specialization_group": group,
+#                     "is_external_managed": bool(is_external_managed),
+#                     "exam_form": exam_form,
+#                     "has_separate_marking": bool(has_separate_marking),
+#                 },
+#             )
+#             if is_created:
+#                 created += 1
+#             else:
+#                 updated += 1
+#         except Exception as e:
+#             errors.append(f"Dòng {idx}: {e}")
+
+#     return created, updated, errors
+
+def import_subjects_from_excel(file_or_ws): 
     """
     Sheet Subjects (đÃ CHỈNH THEO MODEL Subject MỚI):
 
@@ -523,18 +856,22 @@ def import_subjects_from_excel(file_or_ws):
     J: is_external_managed       (1/0)
     K: exam_form                 (TN/TL/TH/BC/KHAC, nếu trống dùng subject_type)
     L: has_separate_marking      (1/0)
+    M: semester_number           (1..5)  <-- mới, tùy chọn
     """
     ws = _get_ws(file_or_ws)
     created = updated = 0
     errors = []
 
     for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        # đọc tối đa 13 cột (A..M)
+        values = list(row[:13]) + [None] * (13 - len(row[:13]))
         (
             code, name, major_code, dept_code,
             subject_type, total_periods, max_class_size,
             rt_code, group_code,
             is_external_managed, exam_form, has_separate_marking,
-        ) = row[:12]
+            semester_number,   # <-- cột mới
+        ) = values
 
         if not code:
             continue
@@ -570,6 +907,18 @@ def import_subjects_from_excel(file_or_ws):
         subject_type = (subject_type or "").strip() or "KHAC"
         exam_form = (exam_form or "").strip() or subject_type
 
+        # chuyển semester_number -> int trong khoảng 1..5 (nếu có)
+        sem_no = None
+        if semester_number not in (None, ""):
+            try:
+                sem_no = int(float(semester_number))
+                if not (1 <= sem_no <= 5):
+                    errors.append(f"Dòng {idx}: semester_number='{semester_number}' không nằm trong khoảng 1..5 → bỏ qua.")
+                    sem_no = None
+            except Exception:
+                errors.append(f"Dòng {idx}: semester_number='{semester_number}' không hợp lệ → bỏ qua.")
+                sem_no = None
+
         try:
             obj, is_created = Subject.objects.update_or_create(
                 code=str(code).strip(),
@@ -585,6 +934,7 @@ def import_subjects_from_excel(file_or_ws):
                     "is_external_managed": bool(is_external_managed),
                     "exam_form": exam_form,
                     "has_separate_marking": bool(has_separate_marking),
+                    "semester_number": sem_no,   # <-- lưu vào model
                 },
             )
             if is_created:
@@ -595,7 +945,6 @@ def import_subjects_from_excel(file_or_ws):
             errors.append(f"Dòng {idx}: {e}")
 
     return created, updated, errors
-
 
 
 def import_room_capabilities_from_excel(file_or_ws):
